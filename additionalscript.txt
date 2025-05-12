@@ -1,0 +1,1181 @@
+def create_analysis_tab(self):
+    """Create the analysis tab."""
+    analysis_tab = QWidget()
+    layout = QVBoxLayout()
+
+    splitter = QSplitter(Qt.Horizontal)
+
+    # Analysis menu (left side)
+    analysis_menu = QWidget()
+    menu_layout = QVBoxLayout(analysis_menu)
+
+    analysis_type_label = QLabel("Select Analysis Type:")
+    menu_layout.addWidget(analysis_type_label)
+
+    # Analysis type selection
+    self.analysis_type = QComboBox()
+    # Populate the combo box using the keys from the analysis_widgets dictionary
+    self.analysis_type.addItems([key.replace('_', ' ').title() for key in self.analysis_widgets.keys()])
+
+    self.analysis_type.currentIndexChanged.connect(self.update_analysis_parameters)
+    menu_layout.addWidget(self.analysis_type)
+
+    # Parameter area (managed by QStackedWidget)
+    self.params_group = QGroupBox("Analysis Parameters")
+    params_layout = QVBoxLayout() # Use QVBoxLayout for the stacked widget
+    self.params_stack = QStackedWidget() # <--- Add QStackedWidget
+
+    # Add each analysis widget to the stacked widget
+    for widget_key in self.analysis_widgets.keys():
+         widget = self.analysis_widgets[widget_key]
+         self.params_stack.addWidget(widget)
+         # Connect the parameters_changed signal from each widget
+         if hasattr(widget, 'parameters_changed'):
+              # Use a lambda to pass the widget key (analysis_type) along with parameters
+              widget.parameters_changed.connect(
+                   lambda params, key=widget_key: self.on_analysis_parameters_changed(key, params)
+              )
+
+
+    params_layout.addWidget(self.params_stack)
+    self.params_group.setLayout(params_layout)
+    menu_layout.addWidget(self.params_group)
+
+    # Run analysis button
+    run_analysis_btn = QPushButton("Run Analysis")
+    run_analysis_btn.clicked.connect(self.run_analysis)
+    menu_layout.addWidget(run_analysis_btn)
+
+    menu_layout.addStretch()
+
+    # Results display (right side) - Keep as is, or update tab names if needed
+    results_widget = QWidget()
+    results_layout = QVBoxLayout(results_widget)
+
+    results_label = QLabel("Analysis Results")
+    results_label.setAlignment(Qt.AlignCenter)
+    results_layout.addWidget(results_label)
+
+    # Tabs for different result views
+    # IMPORTANT: The results tabs for the *specific* analysis results (Summary, Table, Plot)
+    # are now managed *within each individual analysis widget*. The main GUI's results_tabs
+    # might be used for something else or removed, or perhaps the analysis widgets' results
+    # tabs are embedded here.
+    # For simplicity, let's assume the main GUI's results_tabs is replaced by the currently
+    # visible widget's results display area. You would need to add the current widget's
+    # result display widget to the main results_widget layout.
+
+    # --- Option 1: Widgets manage their own tabs (as designed above) ---
+    # Remove the main GUI's results_tabs definition and add a stacked widget for result displays
+    # self.results_display_stack = QStackedWidget()
+    # results_layout.addWidget(self.results_display_stack)
+    # Then, in update_analysis_parameters, switch the visible result display widget.
+    # This requires each analysis widget to expose its result display tabs/widget.
+    # Let's stick to the original design where the main GUI has the results tabs
+    # but the content is *updated* by the selected analysis widget.
+
+    # --- Option 2: Main GUI manages the results tabs and updates their content ---
+    # Keep the main GUI's results_tabs as defined.
+    self.results_tabs = QTabWidget() # Keep this definition
+    # Add the default tabs (Summary, Table, Plot) as defined in the original snippet.
+    # Their content will be updated by the individual widgets.
+
+    # Add default Summary, Table, Plot tabs to self.results_tabs
+    summary_tab = QWidget()
+    summary_layout = QVBoxLayout(summary_tab)
+    self.results_summary = QTextEdit() # Keep this in main GUI
+    self.results_summary.setReadOnly(True)
+    summary_layout.addWidget(self.results_summary)
+    self.results_tabs.addTab(summary_tab, "Summary")
+
+    table_tab = QWidget()
+    table_layout = QVBoxLayout(table_tab)
+    self.results_table = QTableWidget() # Keep this in main GUI
+    table_layout.addWidget(self.results_table)
+    self.results_tabs.addTab(table_tab, "Table")
+
+    plot_tab = QWidget()
+    plot_layout = QVBoxLayout(plot_tab)
+    self.results_canvas = MplCanvas(width=5, height=4, dpi=100) # Keep this in main GUI
+    plot_layout.addWidget(self.results_canvas)
+    plot_toolbar = NavigationToolbar(self.results_canvas, self)
+    plot_layout.addWidget(plot_toolbar)
+    self.results_tabs.addTab(plot_tab, "Plot")
+
+
+    results_layout.addWidget(self.results_tabs) # Add the main results tabs to the layout
+
+
+    # Export results button (already present)
+    export_results_btn = QPushButton("Export Results")
+    export_results_btn.clicked.connect(self.export_results)
+    results_layout.addWidget(export_results_btn)
+
+
+    # Add widgets to splitter
+    splitter.addWidget(analysis_menu)
+    splitter.addWidget(results_widget)
+    splitter.setSizes([300, 700]) # Set initial sizes
+
+    layout.addWidget(splitter)
+
+    analysis_tab.setLayout(layout)
+    self.tabs.addTab(analysis_tab, "Analysis")
+
+    # Initialize the first analysis type (will call update_analysis_parameters)
+    # self.update_analysis_parameters(0) # This is called implicitly when the tab is added to self.tabs
+
+
+
+def update_analysis_parameters(self, index):
+    """Update the analysis parameters display based on the selected analysis type."""
+    analysis_type_key = self.analysis_type.currentText().lower().replace(' ', '_')
+
+    widget_to_show = self.analysis_widgets.get(analysis_type_key)
+    if widget_to_show:
+        self.params_stack.setCurrentWidget(widget_to_show)
+        logger.debug(f"Switched parameter widget to: {analysis_type_key}")
+
+        # --- Update main results display based on the newly selected widget's results ---
+        # If results for this analysis type already exist, display them.
+        if analysis_type_key in self.analysis_results:
+             results = self.analysis_results[analysis_type_key]
+             self._update_main_results_display(results, analysis_type_key)
+        else:
+             # Clear the main results display if no results exist for this type
+             self._clear_main_results_display()
+
+    else:
+        logger.warning(f"No widget found for analysis type key: {analysis_type_key}")
+        # Clear results display if no widget/analyzer is available
+        self._clear_main_results_display()
+
+
+# Add these methods to your SPTAnalyzerGUI class
+def _update_main_results_display(self, results, analysis_type_key):
+    """Updates the main GUI's results display using the specific analysis widget's methods."""
+    analysis_widget = self.analysis_widgets.get(analysis_type_key)
+    if analysis_widget and hasattr(analysis_widget, 'update_results_display'):
+        # Call the widget's method to update the main GUI's results widgets
+        # The widget's update_results_display should populate self.results_summary, self.results_table, self.results_canvas
+        # It needs access to these from the main GUI. Pass them to the widget? Or widget needs parent reference?
+        # Let's assume the widget has a parent reference and can access parent's results widgets.
+        # Example: analysis_widget.update_results_display(results, self.results_summary, self.results_table, self.results_canvas)
+        # A simpler approach: The widget's update_results_display methods update their OWN internal result displays,
+        # and the main GUI just switches which widget is visible.
+        # Let's revert to the original widget design where they manage their own tabs and update their own content.
+
+        # --- Revised approach: Widgets manage their own results tabs ---
+        # The main GUI's results_tabs should be replaced with a StackedWidget for results,
+        # or the analysis widgets' results tabs are embedded directly.
+        # Let's assume each analysis widget's .results_tabs QTabWidget is embedded.
+        # This requires a different layout in create_analysis_tab.
+
+        # --- Re-Revised create_analysis_tab Layout Idea ---
+        # Left Splitter Panel: Analysis Type Combo, StackedWidget for Params, Run Button
+        # Right Splitter Panel: StackedWidget for Results Tabs (each analysis widget has its own results tabs)
+
+        # This becomes complex quickly. Let's simplify back to:
+        # Main GUI has ONE set of results tabs (Summary, Table, Plot).
+        # The SPECIFIC analysis widget's update_results_display method is responsible
+        # for populating these main GUI results tabs with data from *its* analysis results.
+        # This requires passing references to the main GUI's results_summary, results_table, results_canvas.
+
+        # Example modification to DwellTimeWidget.update_results_display signature:
+        # def update_results_display(self, results, summary_widget: QTextEdit, table_widget: QTableWidget, plot_canvas: MplCanvas):
+        #    ... populate summary_widget.setText(...)
+        #    ... populate table_widget ...
+        #    ... use plot_canvas.axes ...
+
+        # This requires updating ALL widget.update_results_display signatures and calls.
+
+        # Let's assume for now that the widgets' update_results_display methods
+        # are designed to update the main GUI's results widgets, possibly by
+        # having a reference to the main GUI parent.
+        # Example: self.parent().results_summary.setText(...) inside the widget.
+
+        # Call the widget's method to update the main GUI's results widgets
+        analysis_widget.update_results_display(results) # Assume this method updates parent's results widgets
+
+    else:
+        logger.warning(f"Could not find or call update_results_display for widget {analysis_type_key}.")
+        # Fallback generic display
+        self._clear_main_results_display()
+        self.results_summary.setText(f"Results for {analysis_type_key.title()}:\n\n" + str(results))
+
+
+def _clear_main_results_display(self):
+    """Clears the content of the main GUI's results display widgets."""
+    self.results_summary.clear()
+    self.results_table.clear()
+    self.results_table.setRowCount(0)
+    self.results_canvas.clear()
+    self.results_canvas.axes.text(0.5, 0.5, "Select analysis type and run analysis.", ha='center', va='center')
+    self.results_canvas.draw()
+
+def run_analysis(self):
+    """Run selected analysis on tracks."""
+    if self.tracks_df is None:
+        QMessageBox.warning(self, "Warning", "No tracks available")
+        return
+
+    try:
+        # Get the currently selected analysis type and its parameters widget
+        analysis_type = self.analysis_type.currentText().lower().replace(' ', '_')
+        current_widget = self.params_stack.currentWidget() # Get the currently visible widget
+
+        if not hasattr(current_widget, 'get_current_parameters'):
+             raise AttributeError(f"Current widget for '{analysis_type}' does not have a 'get_current_parameters' method.")
+
+        analysis_params = current_widget.get_current_parameters()
+
+        # --- Add project/global settings to analysis_params ---
+        # Pass pixel size, frame interval, particle radius, temperature from project settings
+        analysis_params['pixel_size'] = self.project_settings.get('pixel_size', 1.0)
+        analysis_params['frame_interval'] = self.project_settings.get('frame_interval', 0.014)
+        analysis_params['particle_radius'] = self.project_settings.get('particle_radius', 5.0) # in nm, analyzer might need um
+        analysis_params['temperature'] = self.project_settings.get('temperature', 25.0) # in C
+
+        # --- Pass compartment masks if available ---
+        if hasattr(self, 'compartment_masks') and self.compartment_masks is not None:
+             # Need to check if the specific analyzer supports/needs compartment_masks
+             # For simplicity here, just pass if available. Analyzer should handle.
+             analysis_params['compartment_masks'] = self.compartment_masks
+
+        # Show progress bar
+        self.progress_bar.setVisible(True)
+        self.setEnabled(False)
+
+        # Create worker thread
+        self.worker = WorkerThread(
+            "analyze",
+            {
+                "analysis_type": analysis_type,
+                "tracks_df": self.tracks_df,
+                "analysis_params": analysis_params,
+                "analysis_manager": self.analysis_manager
+            }
+        )
+
+        # Connect signals
+        self.worker.progress_updated.connect(self.progress_bar.setValue)
+        self.worker.operation_completed.connect(self.analysis_completed)
+        self.worker.error_occurred.connect(self.analysis_error)
+
+        # Start worker
+        self.worker.start()
+
+    except Exception as e:
+        self.handle_analysis_error(e) # Ensure handle_analysis_error exists or use a simple message box
+
+# spt_gui.py
+# ... (existing standard library imports) ...
+# ... (existing third-party imports) ...
+# ... (existing local imports) ...
+
+from analysis.diffusion import DiffusionAnalyzer
+from analysis.active_transport import ActiveTransportAnalyzer
+from analysis.boundary_crossing import BoundaryCrossingAnalyzer
+from analysis.dwell_time import DwellTimeAnalyzer
+from analysis.crowding import CrowdingAnalyzer
+from analysis.diffusion_population import DiffusionPopulationAnalyzer
+from analysis.gel_structure import GelStructureAnalyzer
+from analysis.microcompartment import MicrocompartmentAnalyzer
+
+from visualization.analysis_plots import AnalysisPlotter
+from visualization.tracks import plot_tracks
+from visualization.diffusion import plot_diffusion_map
+
+from utils.io import load_image_stack, save_tracks, load_tracks
+from utils.processing import enhance_contrast, denoise_image
+from utils.logging_config import setup_logging
+
+# Add the following imports for project management
+from management import SPTProject, TreatmentGroup, Cell
+# Assuming ProjectManagerWidget is in management_widget.py
+# Make sure to create management_widget.py and define ProjectManagerWidget there
+# Or adjust this import if you place it elsewhere
+try:
+    from .management_widget import ProjectManagerWidget
+except ImportError:
+    # Placeholder if management_widget is not yet created
+    class ProjectManagerWidget(QWidget):
+        project_created = pyqtSignal(SPTProject)
+        project_loaded = pyqtSignal(SPTProject)
+        project_saved = pyqtSignal(str)
+        cell_selected = pyqtSignal(Cell)
+        treatment_selected = pyqtSignal(TreatmentGroup)
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            layout = QVBoxLayout(self)
+            layout.addWidget(QLabel("Project Manager Widget Placeholder"))
+        def create_new_project(self): pass
+        def load_project(self): pass
+        def save_project(self): pass
+        def update_ui_from_project(self, project): pass
+        def add_treatment_group(self): pass
+        def add_cell(self): pass
+        def remove_treatment_group(self): pass
+        def remove_cell(self): pass
+        def get_selected_cell(self): return None
+        def get_selected_treatment(self): return None
+    logger.warning("ProjectManagerWidget not found. Using placeholder.")
+
+
+# Set up logging
+logger = logging.getLogger(__name__)
+setup_logging(log_level=logging.INFO)
+
+
+
+def create_project_tab(self):
+        """Create the project management tab."""
+        project_tab = QWidget()
+        layout = QVBoxLayout()
+
+        # Create and add project manager widget
+        # This widget will manage the SPTProject object and its UI representation
+        self.project_manager = ProjectManagerWidget()
+        layout.addWidget(self.project_manager)
+
+        project_tab.setLayout(layout)
+        self.tabs.addTab(project_tab, "Project")
+
+def connect_project_tab_widgets(self):
+        """Connect widgets in the project tab to their slots."""
+        # Connect signals from the ProjectManagerWidget to SPTAnalyzerGUI slots
+        self.project_manager.project_created.connect(self.on_project_created)
+        self.project_manager.project_loaded.connect(self.on_project_loaded)
+        self.project_manager.project_saved.connect(self.on_project_saved)
+        self.project_manager.cell_selected.connect(self.on_cell_selected)
+        self.project_manager.treatment_selected.connect(self.on_treatment_selected) # Optional: for group analysis/viz
+
+        # You might also connect buttons directly if ProjectManagerWidget doesn't handle them
+        # Example: Connect a hypothetical "Edit Project Settings" button in ProjectManagerWidget
+        # self.project_manager.edit_settings_button.clicked.connect(self.edit_project_settings)
+
+# Add these new methods to the SPTAnalyzerGUI class
+
+    def on_project_created(self, project: SPTProject):
+        """Handle new project creation signal from ProjectManagerWidget."""
+        self.current_project = project
+        self.current_cell = None # No cell selected initially
+        # Clear existing data and results from previous project/session
+        self.image_stack = None
+        self.detections = []
+        self.tracks_df = None
+        self.analysis_results = {}
+        # Update GUI displays
+        self.update_project_display() # Update Project tab info
+        self.update_data_summary() # Update Data Summary group
+        self.update_tracking_display() # Clear tracking visualization
+        self.display_analysis_results({}, "None") # Clear analysis results display
+        self.statusBar().showMessage(f"New project '{project.name}' created", 3000)
+
+    def on_project_loaded(self, project: SPTProject):
+        """Handle project loading signal from ProjectManagerWidget."""
+        self.current_project = project
+        self.current_cell = None # No cell selected initially
+        # Clear existing data and results (data will be loaded per cell selection)
+        self.image_stack = None
+        self.detections = []
+        self.tracks_df = None
+        self.analysis_results = {}
+        # Update GUI displays
+        # ProjectManagerWidget should update its own display when it loads the project
+        self.update_project_display() # Update Project tab info
+        self.update_data_summary() # Update Data Summary group
+        self.update_tracking_display() # Clear tracking visualization
+        self.display_analysis_results({}, "None") # Clear analysis results display
+        self.statusBar().showMessage(f"Project '{project.name}' loaded", 3000)
+
+    def on_project_saved(self, filepath: str):
+        """Handle project saved signal from ProjectManagerWidget."""
+        self.statusBar().showMessage(f"Project saved to {filepath}", 3000)
+
+    def on_cell_selected(self, cell: Optional[Cell]):
+        """Handle selection of a cell in the ProjectManagerWidget."""
+        self.current_cell = cell
+        logger.info(f"Cell selected: {cell.cell_id if cell else 'None'}")
+
+        # Clear previous cell's data and results
+        self.image_stack = None
+        self.detections = []
+        self.tracks_df = None
+        self.analysis_results = {}
+
+        if self.current_cell:
+            # Load data for the newly selected cell if its data file exists and tracks aren't in memory
+            if self.current_cell.tracks_df is None and self.current_cell.data_file and os.path.exists(self.current_cell.data_file):
+                try:
+                    # Use the Cell's method to load its tracks
+                    self.current_cell.load_tracks()
+                    self.tracks_df = self.current_cell.tracks_df # Update main GUI reference
+                    self.analysis_results = self.current_cell.analysis_results # Load saved analysis results from cell
+
+                    # Update tracking and analysis/viz displays
+                    self.update_tracking_display()
+                    self.update_data_summary()
+
+                    # If there are saved analysis results for this cell, display the first one or a summary
+                    if self.analysis_results:
+                         first_analysis_type = list(self.analysis_results.keys())[0]
+                         self.display_analysis_results(self.analysis_results[first_analysis_type], first_analysis_type)
+                         self.statusBar().showMessage(f"Data and results loaded for cell: {cell.cell_id}", 3000)
+                    else:
+                         # No saved analysis results, just update displays
+                         self.update_data_summary()
+                         self.update_tracking_display()
+                         self.display_analysis_results({}, "None") # Clear analysis display
+                         self.statusBar().showMessage(f"Data loaded for cell: {cell.cell_id} (No saved analysis)", 3000)
+
+
+                except Exception as e:
+                    logger.error(f"Error loading data for cell {cell.cell_id}: {e}", exc_info=True)
+                    QMessageBox.critical(self, "Error", f"Failed to load data for cell {cell.cell_id}: {str(e)}")
+                    self.tracks_df = None # Clear tracks if loading failed
+                    self.analysis_results = {} # Clear results if loading failed
+                    self.update_tracking_display()
+                    self.update_data_summary()
+                    self.display_analysis_results({}, "None") # Clear analysis display
+
+
+            elif self.current_cell.tracks_df is not None:
+                 # Data is already loaded for this cell, just update GUI references
+                 self.tracks_df = self.current_cell.tracks_df
+                 self.analysis_results = self.current_cell.analysis_results
+                 self.update_tracking_display()
+                 self.update_data_summary()
+                 if self.analysis_results:
+                      first_analysis_type = list(self.analysis_results.keys())[0]
+                      self.display_analysis_results(self.analysis_results[first_analysis_type], first_analysis_type)
+                 else:
+                      self.display_analysis_results({}, "None")
+                 self.statusBar().showMessage(f"Cell selected: {cell.cell_id}", 3000)
+
+            else:
+                 # Cell selected, but no data file or loading failed previously
+                 # GUI references are already cleared at the beginning of this slot
+                 self.update_tracking_display()
+                 self.update_data_summary()
+                 self.display_analysis_results({}, "None") # Clear analysis display
+                 self.statusBar().showMessage(f"Cell selected: {cell.cell_id} (No data loaded)", 3000)
+
+        else:
+            # No cell selected, just clear displays
+            self.update_tracking_display()
+            self.update_data_summary()
+            self.display_analysis_results({}, "None") # Clear analysis display
+            self.statusBar().showMessage("No cell selected", 3000)
+
+
+    def on_treatment_selected(self, treatment: Optional[TreatmentGroup]):
+        """Handle selection of a treatment group in the ProjectManagerWidget."""
+        # This slot is useful for enabling/disabling batch or comparative analysis options
+        # Selecting a treatment might clear the individual cell selection
+        if treatment:
+            logger.info(f"Treatment selected: {treatment.name}")
+            self.statusBar().showMessage(f"Treatment selected: {treatment.name}", 3000)
+            # You might update the batch processing tab to show options for this treatment
+        else:
+            logger.info("No treatment selected.")
+            self.statusBar().showMessage("No treatment selected", 3000)
+
+        # Keep the current_cell and its data/results loaded if the same cell remains selected
+        # If treatment selection implies no cell is selected, handle that in ProjectManagerWidget
+        # For simplicity here, we assume selecting a treatment might deselect the cell
+        # If ProjectManagerWidget handles cell selection separately, this slot just notes the treatment.
+        # If selecting a treatment *only* updates the list of cells, the on_cell_selected
+        # signal will handle the data loading when a cell in that list is clicked.
+
+        # If you need to clear the current cell's data when a treatment is selected:
+        # self.current_cell = None
+        # self.image_stack = None
+        # self.detections = []
+        # self.tracks_df = None
+        # self.analysis_results = {}
+        # self.update_tracking_display()
+        # self.update_data_summary()
+        # self.display_analysis_results({}, "None") # Clear analysis display
+
+
+# In class SPTAnalyzerGUI(QMainWindow):
+    def import_image_stack(self):
+        """Import image stack and add to the current cell."""
+        if self.current_cell is None:
+            QMessageBox.warning(self, "Warning", "Please select a cell in the Project tab first to import image data.")
+            return
+
+        try:
+            # ... (existing file dialog code) ...
+            # Assuming your existing file dialog and loading dialog code is here
+            file_dialog = QFileDialog(self)
+            file_dialog.setWindowTitle("Import Image Stack")
+            # ... (define formats) ...
+            formats = [
+                "Image files (*.tif *.tiff *.ims *.nd2 *.lsm *.czi)",
+                "TIFF files (*.tif *.tiff)",
+                "Imaris files (*.ims)",
+                "Nikon ND2 files (*.nd2)",
+                "Zeiss LSM files (*.lsm)",
+                "Zeiss CZI files (*.czi)",
+                "All files (*.*)"
+            ]
+            file_dialog.setNameFilters(formats)
+            file_dialog.setFileMode(QFileDialog.ExistingFile)
+
+            if file_dialog.exec_():
+                file_path = file_dialog.selectedFiles()[0]
+
+                # Show loading dialog with options
+                loading_dialog = ImageLoadingDialog(self)
+                if loading_dialog.exec_():
+                    params = loading_dialog.get_parameters()
+
+                    # Show progress dialog
+                    progress = QProgressDialog("Loading image stack...", "Cancel", 0, 100, self)
+                    progress.setWindowModality(Qt.WindowModal)
+                    progress.show() # Show dialog non-blocking
+
+                    # Create worker thread for loading
+                    # The worker will load the image stack and emit operation_completed
+                    self.worker = WorkerThread(
+                        "load_image_stack", # Assuming your WorkerThread can handle this operation
+                        {
+                            "file_path": file_path,
+                            "scale": params["scale"],
+                            "subset": params["subset"],
+                            # Pass other params like channels if your loader supports it
+                        }
+                    )
+
+                    # Connect signals
+                    self.worker.progress_updated.connect(progress.setValue)
+                    # Connect to a dedicated slot to handle loaded image stack
+                    self.worker.operation_completed.connect(lambda data: self.image_stack_loaded(data, file_path)) # Pass file_path if needed later
+                    self.worker.error_occurred.connect(self.loading_error)
+
+                    # Disable UI during loading
+                    self.setEnabled(False)
+
+                    # Start worker
+                    self.worker.start()
+                    self.statusBar().showMessage(f"Loading image stack from {file_path}...")
+
+        except Exception as e:
+            self.show_error_message("Import Error", str(e))
+            logger.error(f"Error importing image stack: {e}", exc_info=True)
+            # Re-enable UI and hide progress on error
+            self.setEnabled(True)
+            if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                 self.progress_dialog.hide()
+
+
+    # Add or modify this slot to handle the completed image stack loading
+    def image_stack_loaded(self, image_stack: Optional[np.ndarray], file_path: str):
+        """Handle completion of image stack loading worker."""
+        try:
+            if self.current_cell is None:
+                 logger.error("Image stack loaded but no cell is selected.")
+                 QMessageBox.warning(self, "Warning", "Image stack loaded, but no cell was selected to assign it to.")
+                 return # Return without updating state
+
+            if image_stack is None:
+                 logger.warning(f"Image stack loading worker returned None for {file_path}.")
+                 QMessageBox.warning(self, "Warning", f"Failed to load image stack from {file_path}.")
+                 return # Return without updating state
+
+
+            # Store the image stack (e.g., keep a reference in the GUI)
+            # This is kept separate from tracks_df for display and processing purposes
+            self.image_stack = image_stack
+            # You might want to store the file path in the Cell object's metadata
+            self.current_cell.metadata['image_file'] = file_path # Add this metadata to the Cell object
+
+            # Update UI elements that depend on the image stack
+            if self.image_stack is not None:
+                 self.frame_slider.setMaximum(len(self.image_stack) - 1)
+                 self.tracking_frame_slider.setMaximum(len(self.image_stack) - 1)
+                 self.update_display_frame(0) # Update image display tab
+                 self.update_tracking_frame(0) # Update tracking display tab
+
+            self.update_data_summary() # Update data summary group
+
+            self.statusBar().showMessage(
+                f"Loaded image stack with {len(self.image_stack)} frames for cell {self.current_cell.cell_id}",
+                3000
+            )
+        except Exception as e:
+             logger.error(f"Error processing loaded image stack: {e}", exc_info=True)
+             QMessageBox.critical(self, "Error", f"Failed to process loaded image stack: {str(e)}")
+        finally:
+            # Re-enable UI and hide progress bar
+            self.setEnabled(True)
+            self.progress_bar.setVisible(False)
+            if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                 self.progress_dialog.hide()
+
+
+    # Add or modify this slot to handle loading errors
+    def loading_error(self, error_msg: str):
+         """Handle loading errors from worker thread."""
+         logger.error(f"Loading error: {error_msg}")
+         QMessageBox.critical(self, "Loading Error", f"Image stack loading failed: {error_msg}")
+         # Re-enable UI and hide progress bar
+         self.setEnabled(True)
+         self.progress_bar.setVisible(False)
+         if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+              self.progress_dialog.hide()
+
+
+    def import_tracks(self):
+        """Import tracks from file and add to the current cell."""
+        if self.current_cell is None:
+            QMessageBox.warning(self, "Warning", "Please select a cell in the Project tab first to import tracks.")
+            return
+
+        try:
+            # ... (existing file dialog code) ...
+            file_dialog = QFileDialog()
+            file_path, _ = file_dialog.getOpenFileName(
+                self, "Import Tracks",
+                "",
+                "All Supported Files (*.csv *.xlsx *.h5 *.json *.xml);;CSV (*.csv);;Excel (*.xlsx);;HDF5 (*.h5);;JSON (*.json);;TrackMate XML (*.xml);;All Files (*.*)"
+            )
+
+            if file_path:
+                # Use the load_tracks method from io.py
+                tracks_df = load_tracks(file_path)
+
+                # Assign the loaded tracks to the current cell
+                self.current_cell.tracks_df = tracks_df
+                # Also update the main GUI's tracks_df reference for convenience
+                self.tracks_df = tracks_df
+
+                # Clear any existing analysis results for this cell, as the data has changed
+                self.current_cell.analysis_results = {}
+                self.analysis_results = {} # Clear GUI reference
+
+                # Update display
+                self.update_tracking_display()
+                self.update_data_summary()
+
+                self.statusBar().showMessage(f"Imported {len(self.tracks_df)} track positions for cell {self.current_cell.cell_id}", 3000)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to import tracks: {str(e)}")
+                logger.error(f"Track import error: {e}", exc_info=True)
+
+# In class SPTAnalyzerGUI(QMainWindow):
+
+    def save_project(self):
+        """Save the current project state by delegating to ProjectManagerWidget."""
+        if self.current_project is None:
+            QMessageBox.warning(self, "Warning", "No project loaded to save.")
+            return
+
+        # ProjectManagerWidget handles the file dialog and saving logic
+        self.project_manager.save_project(self.current_project)
+
+
+    def open_project(self):
+        """Open an existing project by delegating to ProjectManagerWidget."""
+        # Ask for confirmation if current project has unsaved changes (optional but good practice)
+        # If self.current_project and not self.current_project.is_saved: # Requires tracking save state
+        #    reply = QMessageBox.question(...)
+        #    if reply == QMessageBox.No: return
+
+        # ProjectManagerWidget handles the file dialog and loading logic
+        self.project_manager.load_project()
+
+    # Note: new_project method should also delegate to ProjectManagerWidget
+    # as shown in Block 5.
+
+    # Existing edit_project_settings can remain as is for now, it edits general settings
+    # not specific project data stored in the SPTProject object.
+
+# In class SPTAnalyzerGUI(QMainWindow):
+
+    def run_analysis(self):
+        """Run selected analysis on tracks of the current cell."""
+        # Ensure a cell is selected and has tracks loaded
+        if self.current_cell is None or self.current_cell.tracks_df is None:
+            QMessageBox.warning(self, "Warning", "Please select a cell with loaded tracks in the Project tab to run analysis.")
+            return
+
+        # The tracks_df for analysis is now retrieved from the current cell
+        tracks_for_analysis = self.current_cell.tracks_df
+
+        try:
+            # Get analysis type and parameters from the GUI controls
+            analysis_type = self.analysis_type.currentText().lower().replace(" ", "_")
+            # Implement get_analysis_parameters to collect parameters from the current analysis widget
+            analysis_params = self.get_analysis_parameters() # This method needs to be updated
+
+            # Show progress bar
+            self.progress_bar.setVisible(True)
+            self.setEnabled(False) # Disable UI during analysis
+
+            # Create worker thread to run analysis in the background
+            self.worker = WorkerThread(
+                "analyze", # Assuming your WorkerThread has an "analyze" operation
+                {
+                    "analysis_type": analysis_type,
+                    "tracks_df": tracks_for_analysis, # Pass the tracks from the current cell
+                    "analysis_params": analysis_params,
+                    "analysis_manager": self.analysis_manager # Pass the analysis manager instance
+                }
+            )
+
+            # Connect signals from the worker thread
+            self.worker.progress_updated.connect(self.progress_bar.setValue)
+            # Connect to a dedicated slot to handle analysis completion
+            self.worker.operation_completed.connect(self.analysis_completed)
+            self.worker.error_occurred.connect(self.analysis_error)
+
+            # Start the worker thread
+            self.worker.start()
+            self.statusBar().showMessage(f"Running {analysis_type.replace('_', ' ')} analysis...")
+
+        except Exception as e:
+            logger.error(f"Analysis setup error: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Analysis failed: {str(e)}")
+            # Ensure UI is re-enabled and progress is hidden on immediate error
+            self.progress_bar.setVisible(False)
+            self.setEnabled(True)
+
+
+    # The analysis_completed slot needs to be updated to store results in the Cell object
+    # as shown in the next block.
+
+    # The analysis_error slot can remain as is, it handles errors from the worker.
+
+# In class SPTAnalyzerGUI(QMainWindow):
+
+    def analysis_completed(self, results: Any):
+        """Handle completion of analysis operation worker."""
+        try:
+            if self.current_cell is None:
+                logger.error("Analysis completed but no cell is selected to store results.")
+                QMessageBox.warning(self, "Warning", "Analysis completed, but no cell was selected to store the results.")
+                return # Return without updating state
+
+            # Get the analysis type that just completed (assuming it's stored in the GUI state)
+            analysis_type = self.analysis_type.currentText().lower().replace("_", " ") # Get current selected type
+
+            # Store the results in the current cell's analysis_results attribute
+            # The structure of results depends on the specific analyzer module
+            # It's recommended that analyzers return a dictionary or a specific AnalysisResults object
+            # For flexibility, let's store the raw results returned by the worker
+            self.current_cell.analysis_results[analysis_type] = results
+            # Also update the GUI's analysis_results cache for displaying
+            self.analysis_results[analysis_type] = results
+
+
+            logger.info(f"Analysis results for '{analysis_type}' stored in cell {self.current_cell.cell_id}")
+
+            # Update the analysis results display area in the GUI
+            # This method needs to handle displaying the results based on the analysis type
+            self.display_analysis_results(results, analysis_type)
+
+            # Update the general data summary (e.g., show that analysis results are available)
+            self.update_data_summary()
+
+            # Reset UI state after completion
+            self.progress_bar.setVisible(False)
+            self.setEnabled(True) # Re-enable UI
+
+            # Show success message in status bar
+            self.statusBar().showMessage(f"{analysis_type.replace('_', ' ').title()} analysis completed for cell {self.current_cell.cell_id}", 3000)
+
+        except Exception as e:
+            logger.error(f"Error handling analysis completion: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to process analysis results: {str(e)}")
+            # Ensure UI is re-enabled and progress is hidden even on error in this handler
+            self.progress_bar.setVisible(False)
+            self.setEnabled(True)
+# In class SPTAnalyzerGUI(QMainWindow):
+
+    def display_analysis_results(self, results: Any, analysis_type: str):
+        """Display analysis results based on type."""
+        # Clear existing displays first
+        self.results_summary.clear()
+        self.results_table.clear()
+        self.results_canvas.axes.clear()
+        self.results_canvas.draw() # Clear plot
+
+        # Retrieve results from the current cell if available
+        results_to_display = None
+        if self.current_cell and analysis_type in self.current_cell.analysis_results:
+             results_to_display = self.current_cell.analysis_results[analysis_type]
+             logger.debug(f"Retrieving results for '{analysis_type}' from cell {self.current_cell.cell_id} for display.")
+        elif results is not None:
+             # If results were passed directly (e.g., just completed analysis), use them
+             results_to_display = results
+             logger.debug(f"Using directly passed results for '{analysis_type}' for display.")
+
+
+        if results_to_display is None:
+             self.results_summary.setText(f"No {analysis_type.replace('_', ' ')} results available for selected cell.")
+             logger.warning(f"No analysis results found or retrieved for {analysis_type} to display.")
+             return # Exit if no results to display
+
+
+        # Now, use the retrieved results_to_display to update the specific display areas
+        # This part requires specific logic for each analysis type.
+        # You need to have methods like display_diffusion_results, display_active_transport_results, etc.
+        # that know how to parse the 'results_to_display' structure for their specific analysis type.
+
+        try:
+            if analysis_type == "diffusion":
+                # Ensure display_diffusion_results can handle the format stored in Cell.analysis_results
+                self.display_diffusion_results(results_to_display)
+            elif analysis_type == "active_transport":
+                # Ensure display_active_transport_results can handle the format
+                self.display_active_transport_results(results_to_display)
+            # ... (add calls for other analysis types) ...
+            elif analysis_type == "boundary_crossing":
+                self.display_boundary_crossing_results(results_to_display)
+            elif analysis_type == "dwell_time":
+                self.display_dwell_time_results(results_to_display)
+            elif analysis_type == "diffusion_population":
+                 self.display_diffusion_population_results(results_to_display)
+            elif analysis_type == "gel_structure":
+                 self.display_gel_structure_results(results_to_display)
+            elif analysis_type == "microcompartment":
+                 self.display_microcompartment_results(results_to_display)
+            elif analysis_type == "crowding_effects":
+                 self.display_crowding_effects_results(results_to_display)
+            # Add any other analysis types here
+
+
+            else:
+                 # Fallback for analysis types without specific display methods
+                 self.results_summary.setText(f"Results for {analysis_type.replace('_', ' ')}:\n\n{results_to_display}")
+                 # Clear table and plot as generic display is text-only
+                 self.results_table.clear()
+                 self.results_canvas.axes.clear()
+                 self.results_canvas.draw()
+                 logger.warning(f"No specific display method for analysis type: {analysis_type}. Displaying raw results.")
+
+
+        except Exception as e:
+            logger.error(f"Error in displaying analysis results for '{analysis_type}': {str(e)}", exc_info=True)
+            self.results_summary.setText(f"Error displaying results for {analysis_type.replace('_', ' ')}:\n{str(e)}")
+            # Ensure table and plot are cleared on display error
+            self.results_table.clear()
+            self.results_canvas.axes.clear()
+            self.results_canvas.draw()
+
+
+    # You MUST have specific methods like these, tailored to the output structure of your analyzers:
+    # def display_diffusion_results(self, results: Dict): ...
+    # def display_active_transport_results(self, results: Dict): ...
+    # def display_boundary_crossing_results(self, results: Dict): ...
+    # def display_dwell_time_results(self, results: Dict): ...
+    # def display_diffusion_population_results(self, results: Dict): ...
+    # def display_gel_structure_results(self, results: Dict): ...
+    # def display_microcompartment_results(self, results: Dict): ...
+    # def display_crowding_effects_results(self, results: Dict): ...
+
+# In class SPTAnalyzerGUI(QMainWindow):
+
+    def generate_visualization(self):
+        """Generate the selected visualization using data and results from the current cell."""
+        # Ensure a cell is selected and has tracks loaded
+        if self.current_cell is None or self.current_cell.tracks_df is None:
+            QMessageBox.warning(self, "Warning", "Please select a cell with loaded tracks in the Project tab to generate visualization.")
+            return
+
+        # Get data and analysis results from the current cell
+        tracks_for_viz = self.current_cell.tracks_df
+        # Pass the whole analysis_results dict for the cell, so visualization functions can access needed results
+        analysis_results_for_viz = self.current_cell.analysis_results
+
+        try:
+            # Get the selected visualization type from the GUI control
+            viz_type = self.viz_type.currentText().replace(" ", "_").lower()
+
+            # Clear the current visualization canvas before drawing a new plot
+            self.viz_canvas.axes.clear()
+            fig = self.viz_canvas.figure # Get the figure to potentially add colorbar etc.
+
+
+            # --- Implement plotting logic for each visualization type ---
+            # You need to have dedicated plotting functions (e.g., in visualization/*.py)
+            # that accept tracks_df, analysis_results, and visualization parameters.
+
+            if viz_type == "track_trajectories":
+                # Get visualization parameters from GUI controls
+                color_by = self.color_by.currentText().lower().replace(" ", "_")
+                colormap = self.colormap.currentText()
+                show_background = self.show_background.isChecked()
+                line_width = self.track_line_width.value()
+
+                # Get background image (using the main GUI's image_stack if available)
+                background = None
+                if show_background and self.image_stack is not None:
+                    # Use the first frame or a max projection as background
+                    background = np.max(self.image_stack, axis=0) # Max projection
+
+                # Prepare color data if coloring by analysis results
+                color_data = None
+                color_label = None
+                if color_by != "track_id":
+                     if color_by == "diffusion_coefficient" and 'diffusion' in analysis_results_for_viz:
+                          diff_results = analysis_results_for_viz['diffusion'].get('results_df')
+                          if diff_results is not None and 'D' in diff_results.columns:
+                              # Merge tracks and diffusion coefficients for coloring
+                              tracks_for_viz = pd.merge(
+                                   tracks_for_viz,
+                                   diff_results[['track_id', 'D']],
+                                   on='track_id',
+                                   how='left' # Keep all tracks
+                              )
+                              color_data = tracks_for_viz['D']
+                              color_label = 'D (μm²/s)'
+                          else:
+                              logger.warning("Diffusion results not available or missing 'D' column for coloring.")
+                              color_by = "track_id" # Fallback
+                     # Add logic for other 'color_by' options (Time, Speed, Length)
+                     # You'll need to calculate or retrieve these features if they are not
+                     # already present in the tracks_for_viz DataFrame or analysis_results.
+                     elif color_by == "time":
+                          color_data = tracks_for_viz['frame'] * self.project_settings.get('frame_interval', 1.0)
+                          color_label = 'Time (s)'
+                     # Add other coloring options as needed (Speed, Length, etc.)
+                     else:
+                          logger.warning(f"Unsupported color_by option '{color_by}'. Falling back to track ID.")
+                          color_by = "track_id"
+
+
+                # Call the dedicated plotting function (e.g., from visualization.tracks)
+                # Ensure plot_tracks supports coloring by a data series
+                plot_tracks(
+                    tracks_for_viz,
+                    background=background,
+                    colorby=color_by if color_by != "track_id" else None, # Pass column name for coloring
+                    color_data=color_data, # Pass the actual data for coloring
+                    cmap=colormap,
+                    linewidth=line_width,
+                    ax=self.viz_canvas.axes, # Plot on the GUI's canvas axes
+                    pixel_size=self.project_settings.get('pixel_size', 1.0), # Use project settings
+                    colorbar_label=color_label, # Set colorbar label
+                    title=f"Track Trajectories ({self.current_cell.cell_id})"
+                )
+                # Ensure the plotting function handles adding the colorbar if needed
+
+
+            elif viz_type == "diffusion_map":
+                 # Ensure diffusion analysis results are available
+                 if 'diffusion' not in analysis_results_for_viz or 'results_df' not in analysis_results_for_viz['diffusion']:
+                      QMessageBox.warning(
+                           self, "Warning",
+                           "Diffusion analysis results not available for selected cell. Please run diffusion analysis first."
+                      )
+                      return
+                 diff_results_df = analysis_results_for_viz['diffusion']['results_df']
+
+                 # Get visualization parameters
+                 colormap = self.diff_colormap.currentText()
+                 log_scale = self.log_scale.isChecked()
+                 show_background = self.show_diff_background.isChecked()
+                 diff_min = self.diff_min.value()
+                 diff_max = self.diff_max.value()
+
+                 # Get background image
+                 background = None
+                 if show_background and self.image_stack is not None:
+                      background = np.max(self.image_stack, axis=0) # Max projection
+
+                 # Call the plotting function from visualization.diffusion
+                 plot_diffusion_map(
+                      tracks_for_viz, # Pass tracks for positions
+                      diff_results_df, # Pass diffusion results for D values
+                      background=background,
+                      cmap=colormap,
+                      ax=self.viz_canvas.axes, # Plot on the GUI's canvas axes
+                      pixel_size=self.project_settings.get('pixel_size', 1.0), # Use project settings
+                      colorbar_label="D (μm²/s)"
+                 )
+
+                 # Manually set log scale and limits if needed by the plotting function,
+                 # or ensure the plotting function handles these parameters directly.
+                 # If plot_diffusion_map returns the scatter object, you can modify its norm here:
+                 # scatter_obj = plot_diffusion_map(...)
+                 # if log_scale and scatter_obj:
+                 #      from matplotlib.colors import LogNorm
+                 #      scatter_obj.norm = LogNorm(vmin=diff_min, vmax=diff_max)
+                 #      # Update colorbar if it exists
+                 #      if scatter_obj.colorbar:
+                 #           scatter_obj.colorbar.update_normal(scatter_obj)
+
+
+            # ... Add logic for other visualization types, retrieving data/results from
+            # tracks_for_viz and analysis_results_for_viz ...
+
+            elif viz_type == "msd_curves":
+                 # Ensure diffusion analysis results are available
+                 if 'diffusion' not in analysis_results_for_viz or 'results_df' not in analysis_results_for_viz['diffusion']:
+                      QMessageBox.warning(
+                           self, "Warning",
+                           "Diffusion analysis results not available for selected cell. Please run diffusion analysis first."
+                      )
+                      return
+                 diff_results = analysis_results_for_viz['diffusion'] # Pass the whole results structure
+
+                 # Get visualization parameters
+                 max_lag = self.msd_viz_max_lag.value()
+                 group_by = self.msd_viz_group_by.currentText().lower().replace(" ", "_")
+                 num_groups = self.msd_viz_num_groups.value()
+                 show_fit = self.msd_viz_show_fit.isChecked()
+                 show_errorbars = self.msd_viz_show_errorbars.isChecked()
+
+                 # Need a plotting function specifically for MSD curves that uses the analysis results
+                 # from the diffusion analysis.
+                 # Example (assuming a function plot_msd_curves_viz exists):
+                 # from visualization.diffusion import plot_msd_curves_viz
+                 # plot_msd_curves_viz(
+                 #      diff_results, # Pass the entire results structure if needed by the plotter
+                 #      tracks_for_viz, # Pass tracks_df if needed for grouping logic within plotter
+                 #      max_lag=max_lag,
+                 #      group_by=group_by,
+                 #      num_groups=num_groups,
+                 #      show_fit=show_fit,
+                 #      show_errorbars=show_errorbars,
+                 #      ax=self.viz_canvas.axes, # Plot on the GUI's canvas axes
+                 #      pixel_size=self.project_settings.get('pixel_size', 1.0),
+                 #      frame_interval=self.project_settings.get('frame_interval', 1.0),
+                 #      title=f"MSD Curves ({self.current_cell.cell_id})"
+                 # )
+                 # For now, display a placeholder
+                 self.viz_canvas.axes.text(0.5, 0.5, "MSD Curve Visualization To Be Implemented", ha='center', va='center', transform=self.viz_canvas.axes.transAxes)
+                 self.viz_canvas.axes.set_title(f"MSD Curves ({self.current_cell.cell_id})")
+
+
+            else:
+                # Fallback for visualization types without specific methods
+                QMessageBox.information(
+                    self, "Visualization",
+                    f"Visualization type '{viz_type.replace('_', ' ')}' not fully implemented."
+                )
+                return # Exit if not implemented
+
+
+            # Draw the updated canvas to display the plot
+            fig.tight_layout()
+            self.viz_canvas.draw()
+
+            # Update status bar message
+            self.statusBar().showMessage(f"{viz_type.replace('_', ' ').title()} visualization generated for cell {self.current_cell.cell_id}", 3000)
+
+        except Exception as e:
+            logger.error(f"Error generating visualization: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to generate visualization: {str(e)}")
+            # Ensure canvas is cleared or shows an error message on failure
+            self.viz_canvas.axes.clear()
+            self.viz_canvas.axes.text(0.5, 0.5, f"Visualization Error:\n{str(e)}", ha='center', va='center', color='red', wrap=True, transform=self.viz_canvas.axes.transAxes)
+            self.viz_canvas.axes.set_title(f"{viz_type.replace('_', ' ').title()} Visualization Error")
+            self.viz_canvas.draw()
+
+
+    # You MUST have dedicated plotting functions in your visualization module (e.g., visualization/tracks.py, visualization/diffusion.py)
+    # These functions should accept the tracks_df, relevant analysis results, axis object, and visualization parameters.
+
+# In class SPTAnalyzerGUI(QMainWindow):
+
+    def update_data_summary(self):
+        """Update the data summary display based on the current project and cell."""
+
+        # Update project info display (assuming project_settings is synced or derived)
+        # self.update_project_info() # This updates labels based on project_settings dict
+
+
+        # Update Data Summary group
+        if self.current_project is not None:
+            # Display project-level information
+            project_name = self.current_project.name
+            num_treatments = len(self.current_project.treatments)
+            total_cells_in_project = sum(len(t.cells) for t in self.current_project.treatments.values())
+
+            project_summary_text = (
+                f"Project: {project_name}\n"
+                f"Treatments: {num_treatments}, Cells: {total_cells_in_project}\n"
+                # Add project-level analysis summary if available
+                # This requires implementing methods to get project-level results
+            )
+            self.image_stack_info.setText(project_summary_text) # Reuse this label for project summary
+
+            # Display information about the currently selected cell
+            cell_info_text = "Selected Cell: None"
+            if self.current_cell is not None:
+                cell_info_text = f"Selected Cell: {self.current_cell.cell_id}\n"
+
+                # Display info about the cell's data file
+                if self.current_cell.data_file:
+                    cell_info_text += f"Data File: {os.path.basename(self.current_cell.data_file)}\n"
+                else:
+                    cell_info_text += "Data File: None\n"
+
+                # Display info about loaded tracks for the cell
+                if self.current_cell.tracks_df is not None:
+                    num_cell_tracks = self.current_cell.tracks_df['track_id'].nunique()
+                    num_cell_points = len(self.current_cell.tracks_df)
+                    cell_info_text += f"Tracks: {num_cell_tracks} ({num_cell_points} points)\n"
+                else:
+                    cell_info_text += "Tracks: Not loaded\n"
+
+                # Display info about analysis results stored in the cell
+                if self.current_cell.analysis_results:
+                    cell_info_text += f"Analysis Results: {len(self.current_cell.analysis_results)} types\n"
+                    # List the analysis types available for the cell
+                    analysis_types_available = [key.replace('_', ' ').title() for key in self.current_cell.analysis_results.keys()]
+                    if analysis_types_available:
+                         cell_info_text += f" ({', '.join(analysis_types_available)})"
+                else:
+                    cell_info_text += "Analysis Results: None\n"
+
+                # Display info about loaded image stack for the cell (if stored or referenced)
+                if self.image_stack is not None: # Assuming main GUI holds the image stack for the current cell
+                     cell_info_text += f"Image Stack: {self.image_stack.shape[0]} frames ({self.image_stack.shape[1]}x{self.image_stack.shape[2]})\n"
+                elif 'image_file' in self.current_cell.metadata and os.path.exists(self.current_cell.metadata['image_file']):
+                     cell_info_text += f"Image File: {os.path.basename(self.current_cell.metadata['image_file'])} (Not loaded)\n"
+                else:
+                     cell_info_text += "Image Data: None\n"
+
+
+            # Update labels in the Data Summary group
+            self.detections_info.setText(cell_info_text) # Reuse this label for cell summary
+            # Clear other labels or reuse them for specific cell stats if desired
+            self.tracks_info.setText("") # Clear or reuse
+            self.analysis_info.setText("") # Clear or reuse
+
+
+        else:
+            # No project loaded, revert to initial state messages
+            self.project_name_label.setText("Untitled Project")
+            self.pixel_size_label.setText("N/A")
+            self.frame_interval_label.setText("N/A")
+            self.temperature_label.setText("N/A")
+            self.particle_radius_label.setText("N/A")
+            self.project_notes.setText("Create or load a project to see notes.")
+
+            self.image_stack_info.setText("No project loaded") # Reuse for overall project state
+            self.detections_info.setText("No cell selected") # Reuse for current cell state
+            self.tracks_info.setText("") # Clear
+            self.analysis_info.setText("") # Clear
+
+
+    # Add or modify update_project_info if needed to sync project_settings with SPTProject attributes
+    # def update_project_info(self):
+    #     """Update the project information display from current_project settings."""
+    #     if self.current_project:
+    #         self.project_name_label.setText(self.current_project.name)
+    #         # Assuming project settings like pixel size are stored elsewhere or in metadata
+    #         # self.pixel_size_label.setText(...)
+    #         self.project_notes.setText(self.current_project.description)
+    #     else:
+    #          # Update to default/empty state
+    #          self.project_name_label.setText("Untitled Project")
+    #          self.project_notes.setText("Create or load a project to see notes.")
+
